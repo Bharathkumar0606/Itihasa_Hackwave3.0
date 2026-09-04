@@ -186,6 +186,7 @@ h2 { margin-bottom: 0; font: 600 clamp(29px, 3.2vw, 43px)/1.1 'Playfair Display'
 .photo-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .photo-camera { display: grid; gap: 7px; }
 .photo-camera video { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #1f2520; }
+.camera-preview-actions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
 .camera-cancel { width: max-content; padding: 0; border: 0; color: var(--muted); background: transparent; font-size: 10px; }
 .profile-modal { position: relative; width: min(560px, 100%); max-height: 92vh; overflow: auto; padding: 38px 42px 35px; background: var(--cream); box-shadow: 0 20px 60px rgba(0,0,0,.25); animation: rise .25s ease both; }
 .profile-avatar-large { width: 58px; height: 58px; display: grid; place-items: center; margin-bottom: 20px; overflow: hidden; color: var(--rust); background: var(--paper-deep); border-radius: 50%; }
@@ -201,6 +202,13 @@ h2 { margin-bottom: 0; font: 600 clamp(29px, 3.2vw, 43px)/1.1 'Playfair Display'
 .role-options button span { font-size: 10px; }
 .role-options button.chosen { border-color: var(--rust); background: #f2e4d6; }
 .profile-save { margin-top: 20px; }
+.scan-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; }
+.scan-status small { flex-basis: 100%; }
+.detected-place { display: flex; align-items: flex-start; gap: 9px; padding: 12px; border: 1px solid var(--line); color: var(--rust); background: var(--paper-deep); }
+.detected-place div { display: grid; gap: 3px; }
+.detected-place strong { color: var(--ink); font-size: 12px; }
+.detected-place span { color: var(--muted); font-size: 10px; }
+.profile-logout { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; padding: 0; border: 0; color: var(--rust-dark); background: transparent; font-size: 11px; font-weight: 700; }
 .accessibility-listen { position: fixed; z-index: 4; right: 22px; bottom: 22px; display: inline-flex; align-items: center; gap: 9px; padding: 13px 16px; border: 0; color: #fff; background: var(--rust); box-shadow: 0 8px 20px rgba(70,45,25,.25); font-size: 12px; font-weight: 700; }
 .accessibility-listen:hover { background: var(--rust-dark); }
 .role-blind .accessibility-listen { right: 28px; bottom: 28px; padding: 17px 21px; font-size: 15px; border: 2px solid #fff; outline: 3px solid var(--rust); }

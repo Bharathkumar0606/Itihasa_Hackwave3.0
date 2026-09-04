@@ -8,6 +8,7 @@ import {
   Compass,
   Headphones,
   Landmark,
+  LogOut,
   MapPin,
   Menu,
   Pause,
@@ -20,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
-import { GoogleAuthProvider, getRedirectResult, onAuthStateChanged, signInWithPopup, signInWithRedirect } from "firebase/auth";
+import { GoogleAuthProvider, getRedirectResult, onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from "firebase/auth";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { auth, db, storage } from "./firebase";
@@ -309,9 +310,11 @@ function App() {
   const [submissionSent, setSubmissionSent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState("");
-  const [placeName, setPlaceName] = useState("");
-  const [localStory, setLocalStory] = useState("");
+  const [cameraError, setCameraError] = useState("");
   const [reviewResult, setReviewResult] = useState(null);
+  const [placeMatch, setPlaceMatch] = useState(null);
+  const [scanLocation, setScanLocation] = useState(null);
+  const [locationStatus, setLocationStatus] = useState("");
   const [selectedLocation, setSelectedLocation] = useState("Telangana");
   const [viewMode, setViewMode] = useState("list");
   const [user, setUser] = useState(null);
@@ -383,23 +386,29 @@ function App() {
     if (!showContribution || submissionMode !== "camera") {
       cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
       cameraStreamRef.current = null;
+      setCameraError("");
       return undefined;
     }
     let cancelled = false;
-    navigator.mediaDevices
-      ?.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-        audio: false,
-      })
+    setCameraError("");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError("Live camera is not available. Open the app on localhost or HTTPS and allow camera access.");
+      return undefined;
+    }
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false })
+      .catch(() => navigator.mediaDevices.getUserMedia({ video: true, audio: false }))
       .then((stream) => {
         if (cancelled) {
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
         cameraStreamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => setCameraError("Camera preview could not start. Check browser permissions."));
+        }
       })
-      .catch(() => setSubmissionMode("upload"));
+      .catch((error) => setCameraError(error.name === "NotAllowedError" ? "Camera permission was denied. Allow camera access in your browser, then try again." : "Camera could not be started. Check that another app is not using it."));
     return () => {
       cancelled = true;
       cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -478,8 +487,9 @@ function App() {
     setSelectedPlace(null);
   }
 
-  function openContribution(mode = "upload") {
+  function openContribution(mode = "upload", detectedPlace = null) {
     setSubmissionMode(mode);
+    setPlaceMatch(detectedPlace);
     setShowContribution(true);
   }
 
@@ -556,7 +566,6 @@ function App() {
 
   async function saveProfile() {
     if (!user || !profileName.trim()) return;
-    setShowProfile(false);
     try {
       await addDoc(collection(db, "userProfiles"), { uid: user.uid, displayName: profileName.trim(), role: profileRole, email: user.email || "", createdAt: serverTimestamp() });
     } catch { /* local profile still keeps the experience usable when rules are pending */ }
@@ -564,6 +573,25 @@ function App() {
     localStorage.setItem("itihasa-profile-name", profileName.trim());
     localStorage.setItem(`itihasa-profile-${user.uid}`, "saved");
     setProfileSaved(true);
+    setShowProfile(false);
+  }
+
+  function chooseProfileRole(role) {
+    setProfileRole(role);
+    localStorage.setItem("itihasa-profile-role", role);
+    localStorage.setItem("itihasa-profile-name", profileName.trim());
+    if (user) localStorage.setItem(`itihasa-profile-${user.uid}`, "saved");
+    setShowProfile(false);
+  }
+
+  async function logOut() {
+    setShowProfile(false);
+    setAuthError("");
+    try {
+      await signOut(auth);
+    } catch (error) {
+      setAuthError(formatAuthError(error));
+    }
   }
 
   function closeContribution() {
@@ -571,11 +599,40 @@ function App() {
     setShowContribution(false);
     setSubmissionSent(false);
     setSelectedMedia(null);
-    setPlaceName("");
-    setLocalStory("");
     setSubmissionError("");
+    setCameraError("");
     setReviewResult(null);
+    setPlaceMatch(null);
+    setScanLocation(null);
+    setLocationStatus("");
   }
+
+  function scanLocationFromDevice() {
+    if (!navigator.geolocation) {
+      setLocationStatus("Location is not available in this browser.");
+      return;
+    }
+    setLocationStatus("Finding your location...");
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        setScanLocation({ latitude: coords.latitude, longitude: coords.longitude });
+        setLocationStatus(`Location found: ${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`);
+      },
+      () => setLocationStatus("Location permission was not granted. You can still add the place manually."),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    );
+  }
+
+  function detectPlaceFromCamera() {
+    if (selectedPlace) {
+      setPlaceMatch(selectedPlace);
+      setLocationStatus(`Dataset place detected: ${selectedPlace.name}`);
+      return;
+    }
+    scanLocationFromDevice();
+    setLocationStatus("Location captured. No matching dataset coordinates are available, so add this as a new place.");
+  }
+
 
   function handleMediaChange(event) {
     const file = event.target.files?.[0];
@@ -589,36 +646,44 @@ function App() {
   }
 
   async function submitContribution() {
-    if (!placeName.trim() || !localStory.trim()) {
-      setSubmissionError("Add a place name and local story before submitting.");
-      return;
-    }
+    const submissionPlaceName = placeMatch?.name || (scanLocation ? `Uncatalogued place at ${scanLocation.latitude.toFixed(4)}, ${scanLocation.longitude.toFixed(4)}` : "Uncatalogued heritage place");
+    const submissionStory = placeMatch?.["Story Naration"] || "Community-submitted heritage location awaiting AI verification.";
     setSubmitting(true);
     setSubmissionError("");
     try {
       const signedInUser = await requireUser();
       if (!signedInUser) throw new Error("Sign in with Google to share a place.");
-      let mediaUrl = "";
-      if (selectedMedia?.file) {
-        const mediaRef = ref(storage, `submissions/${signedInUser.uid}/${Date.now()}-${selectedMedia.file.name}`);
-        await uploadBytes(mediaRef, selectedMedia.file, { contentType: selectedMedia.file.type });
-        mediaUrl = await getDownloadURL(mediaRef);
-      }
       const response = await fetch("/api/featherless/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          placeName: placeName.trim(),
-          localStory: localStory.trim(),
+          placeName: submissionPlaceName,
+          localStory: submissionStory,
           state: selectedLocation,
           mediaType: selectedMedia?.type || "",
-          mediaUrl,
+          placeExists: Boolean(placeMatch),
+          latitude: scanLocation?.latitude || null,
+          longitude: scanLocation?.longitude || null,
           contributorId: signedInUser.uid,
         }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Featherless review failed.");
       setReviewResult(payload.review);
+      if (payload.review.status === "Rejected") throw new Error("AI review rejected this place submission. Please add stronger evidence and try again.");
+      let mediaUrl = "";
+      if (selectedMedia?.file) {
+        const mediaRef = ref(storage, `submissions/${signedInUser.uid}/${Date.now()}-${selectedMedia.file.name}`);
+        await uploadBytes(mediaRef, selectedMedia.file, { contentType: selectedMedia.file.type });
+        mediaUrl = await getDownloadURL(mediaRef);
+      }
+      await addDoc(collection(db, "communityPlaces"), {
+        placeName: submissionPlaceName, localStory: submissionStory, state: selectedLocation,
+        placeExists: Boolean(placeMatch), matchedPlaceId: placeMatch?.id || null,
+        mediaUrl, mediaType: selectedMedia?.type || "", latitude: scanLocation?.latitude || null,
+        longitude: scanLocation?.longitude || null, review: payload.review,
+        contributorId: signedInUser.uid, createdAt: serverTimestamp(),
+      });
       setSubmissionSent(true);
     } catch (error) {
       setSubmissionError(error.message);
@@ -790,7 +855,7 @@ function App() {
           </div>
           <div className="contribute-rail-actions">
             <button className="primary-action" type="button" onClick={() => openContribution("upload")}><Landmark size={17} /> Submit a place</button>
-            <button className="camera-action" type="button" onClick={() => openContribution("camera")}><Camera size={17} /> Live camera share</button>
+            <button className="camera-action" type="button" onClick={() => openContribution("camera", selectedPlace)}><Camera size={17} /> Live camera share</button>
           </div>
         </section>
         <section className="explore-section" aria-labelledby="explore-heading">
@@ -1145,7 +1210,7 @@ function App() {
                 </div>
                 <div className="capture-box">
                   {submissionMode === "camera" ? (
-                    <div className="submission-camera-preview"><video ref={videoRef} autoPlay playsInline muted aria-label="Live camera preview" /><button className="camera-capture-button" type="button" onClick={captureSubmissionPhoto}><Camera size={17} /> Capture photo</button></div>
+                    <div className="submission-camera-preview"><video ref={videoRef} autoPlay playsInline muted aria-label="Live camera preview" /><div className="camera-preview-actions"><button className="small-action" type="button" onClick={detectPlaceFromCamera}><MapPin size={13} /> Detect place</button><button className="camera-capture-button" type="button" onClick={captureSubmissionPhoto} disabled={Boolean(cameraError)}><Camera size={17} /> Capture photo</button></div>{cameraError && <p className="submission-error" role="alert">{cameraError}</p>}</div>
                   ) : selectedMedia ? (
                     selectedMedia.type.startsWith("video/") ? (
                       <video
@@ -1174,20 +1239,18 @@ function App() {
                     </label>
                   )}
                 </div>
-                <div className="submission-fields">
-                  <label>
-                    Place name
-                    <input value={placeName} onChange={(event) => setPlaceName(event.target.value)} placeholder="What is this place called?" />
-                  </label>
-                  <label>
-                    Local story or legend
-                    <textarea
-                      value={localStory}
-                      onChange={(event) => setLocalStory(event.target.value)}
-                      placeholder="What should visitors know?"
-                      rows="3"
-                    />
-                  </label>
+                {placeMatch ? (
+                  <div className="detected-place">
+                    <MapPin size={16} />
+                    <div><strong>{placeMatch.name}</strong><span>Dataset place detected. Its existing narration will be used.</span></div>
+                  </div>
+                ) : (
+                  <div className="detected-place"><MapPin size={16} /><div><strong>New place by location</strong><span>No name or description is required. Upload evidence and AI will verify it.</span></div></div>
+                )}
+                <div className="scan-status">
+                  <button className="small-action" type="button" onClick={scanLocationFromDevice}><MapPin size={13} /> Scan location</button>
+                  <span>{placeMatch ? `Sharing evidence for ${placeMatch.name}` : "Sharing a new place by location"}</span>
+                  {locationStatus && <small>{locationStatus}</small>}
                 </div>
                 {submissionError && <p className="submission-error" role="alert">{submissionError}</p>}
                 <button
@@ -1213,11 +1276,12 @@ function App() {
             <p className="profile-subtitle">Choose how you want to experience heritage. You can change this anytime.</p>
             <label className="profile-name-field">Your name<input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder={user.displayName || "Your name"} /></label>
             <div className="role-options" role="radiogroup" aria-label="Choose your experience">
-              <button type="button" className={profileRole === "normal" ? "chosen" : ""} onClick={() => setProfileRole("normal")}><UserRound size={18} /><strong>Explorer</strong><span>Full discovery, maps, ratings, and stories.</span></button>
-              <button type="button" className={profileRole === "blind" ? "chosen" : ""} onClick={() => setProfileRole("blind")}><Volume2 size={18} /><strong>Audio first</strong><span>Large listening controls and narration-led browsing.</span></button>
-              <button type="button" className={profileRole === "child" ? "chosen" : ""} onClick={() => setProfileRole("child")}><Sparkles size={18} /><strong>Young explorer</strong><span>Playful visuals, short stories, and gentle discovery.</span></button>
+              <button type="button" className={profileRole === "normal" ? "chosen" : ""} onClick={() => chooseProfileRole("normal")}><UserRound size={18} /><strong>Explorer</strong><span>Full discovery, maps, ratings, and stories.</span></button>
+              <button type="button" className={profileRole === "blind" ? "chosen" : ""} onClick={() => chooseProfileRole("blind")}><Volume2 size={18} /><strong>Audio first</strong><span>Large listening controls and narration-led browsing.</span></button>
+              <button type="button" className={profileRole === "child" ? "chosen" : ""} onClick={() => chooseProfileRole("child")}><Sparkles size={18} /><strong>Young explorer</strong><span>Playful visuals, short stories, and gentle discovery.</span></button>
             </div>
             <button className="primary-action profile-save" type="button" onClick={saveProfile} disabled={!profileName.trim()}>Save my profile <Check size={16} /></button>
+            <button className="profile-logout" type="button" onClick={logOut}><LogOut size={15} /> Log out</button>
             {profileSaved && <span className="tool-message">Profile saved.</span>}
           </article>
         </div>
