@@ -26,7 +26,7 @@ const server = http.createServer(async (request, response) => {
   try {
     let rawBody = "";
     for await (const chunk of request) rawBody += chunk;
-    const { placeName, localStory, state, mediaType } = JSON.parse(rawBody);
+    const { placeName, localStory, state, mediaType, placeExists, latitude, longitude } = JSON.parse(rawBody);
     if (!placeName?.trim() || !localStory?.trim()) {
       return sendJson(response, 400, { error: "placeName and localStory are required." });
     }
@@ -54,6 +54,8 @@ const server = http.createServer(async (request, response) => {
               state,
               localStory,
               mediaType: mediaType || "none",
+              placeExists: Boolean(placeExists),
+              coordinates: latitude && longitude ? { latitude, longitude } : null,
             }),
           },
         ],
