@@ -1,4 +1,12 @@
-# Itihasa
+# Itihasa_Hackwave3.0
+
+**What if the monuments we walk past every day could tell us their stories?**
+
+Itihasa helps children and adults discover the people, struggles, achievements, and forgotten stories behind India's forts, temples, sculptures, and historic sites. It teaches history through memorable storytelling, emotion, context, and curiosity.
+
+Itihasa - Discover the forgotten, remember the story.
+
+## Firebase login setup
 
 ## Firebase login setup
 
